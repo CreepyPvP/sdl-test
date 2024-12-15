@@ -4,6 +4,7 @@ project(sdltest)
 
 set(CMAKE_BUILD_TYPE Debug)
 set(ROOT_DIR ${PROJECT_SOURCE_DIR})
+set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(external/sdl EXCLUDE_FROM_ALL)
 
