@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <stddef.h>
+#include <math.h>
 
 #include <SDL3/SDL.h>
 
@@ -11,20 +12,10 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 typedef float f32;
 
+#include "game_math.cpp"
+
 i32 WindowWidth = 1280;
 i32 WindowHeight = 720;
-
-struct v3
-{
-    f32 X;
-    f32 Y;
-    f32 Z;
-};
-
-inline v3 V3(f32 X, f32 Y, f32 Z)
-{
-    return {X, Y, Z};
-}
 
 struct vertex
 {
@@ -36,9 +27,15 @@ struct state
     SDL_GPUDevice *Device;
 };
 
+struct global_uniforms
+{
+    mat4 Projection;
+    mat4 View;
+};
+
 state State = {};
 
-SDL_GPUShader *LoadShader(const char *Path, bool Fragment)
+SDL_GPUShader *LoadShader(const char *Path, u32 UniformBufferCount, bool Fragment)
 {
     SDL_GPUShaderStage Stage = SDL_GPU_SHADERSTAGE_VERTEX;
     if (Fragment)
@@ -56,6 +53,7 @@ SDL_GPUShader *LoadShader(const char *Path, bool Fragment)
     ShaderInfo.entrypoint = "main";
     ShaderInfo.format = SDL_GPU_SHADERFORMAT_SPIRV;
     ShaderInfo.stage = Stage;
+    ShaderInfo.num_uniform_buffers = UniformBufferCount;
 
     SDL_GPUShader *Shader = SDL_CreateGPUShader(State.Device, &ShaderInfo);
     assert(Shader);
@@ -69,7 +67,9 @@ i32 main()
 {
     SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_Window *Window =  SDL_CreateWindow("My game", WindowWidth, WindowHeight, SDL_WINDOW_VULKAN);
+    SDL_SetLogPriorities(SDL_LOG_PRIORITY_DEBUG);
+
+    SDL_Window *Window =  SDL_CreateWindow("My game", WindowWidth, WindowHeight, SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
     State.Device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, NULL);
 
     if (!SDL_ClaimWindowForGPUDevice(State.Device, Window))
@@ -78,8 +78,8 @@ i32 main()
         return 1;
     }
 
-    SDL_GPUShader *FragmentShader = LoadShader("assets/default.frag.spv", true);
-    SDL_GPUShader *VertexShader = LoadShader("assets/default.vert.spv", false);
+    SDL_GPUShader *FragmentShader = LoadShader("assets/default.frag.spv", 0, true);
+    SDL_GPUShader *VertexShader = LoadShader("assets/default.vert.spv", 1, false);
 
     // Pipeline...
     //
@@ -129,6 +129,9 @@ i32 main()
     TransferData[0].Position = V3(-0.3, -0.3, 0.0);
     TransferData[1].Position = V3(0.3, -0.3, 0.0);
     TransferData[2].Position = V3(0.0, 0.3, 0.0);
+    // TransferData[0].Position = V3(-0.3, 0, -0.3);
+    // TransferData[1].Position = V3(0.3, 0, -0.3);
+    // TransferData[2].Position = V3(0.0, 0, 0.3);
     SDL_UnmapGPUTransferBuffer(State.Device, TransferBuffer);
 
     SDL_GPUCommandBuffer *UploadCommandBuffer = SDL_AcquireGPUCommandBuffer(State.Device);
@@ -177,6 +180,10 @@ i32 main()
         SDL_GPUTexture *SwapchainTexture;
         SDL_AcquireGPUSwapchainTexture(CommandBuffer, Window, &SwapchainTexture, NULL, NULL);
 
+        global_uniforms GlobalUniforms = {};
+        GlobalUniforms.Projection = Perspective(Radians(50), (f32) WindowWidth / (f32) WindowHeight, 0.01, 1000);
+        GlobalUniforms.View = LookAt(V3(0, 0, 1), V3(0), V3(0, 1, 0));
+
         // NOTE: When window is minimized there is no swapchain image, so SwapchainTexture will be NULL
         if (SwapchainTexture)
         {
@@ -192,6 +199,8 @@ i32 main()
             SDL_GPUBufferBinding VertexBufferBinding = {};
             VertexBufferBinding.buffer = VertexBuffer;
             SDL_BindGPUVertexBuffers(RenderPass, 0, &VertexBufferBinding, 1);
+
+            SDL_PushGPUVertexUniformData(CommandBuffer, 0, &GlobalUniforms, sizeof(GlobalUniforms));
 
             SDL_DrawGPUPrimitives(RenderPass, 3, 1, 0, 0);
             SDL_EndGPURenderPass(RenderPass);
