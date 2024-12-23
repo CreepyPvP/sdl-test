@@ -1,3 +1,5 @@
+DAY 1 ------------------------------------------------
+
 tab: toggle edit mode
 shift a: Add object
 1/2/3: Switch mode
@@ -6,3 +8,12 @@ g shift z: Move on all but z axis
 m: merge (by distance to combine meshes?)
 cntrl b: bevel
 
+DAY 2 ------------------------------------------------
+
+Watched this video to 6:20
+
+coloring using a colorscheme texture (add material texture in 'shading'. set uvs in 'uv editing')
+s0: to scale by 0
+in viewport enable shadows and cavity, set ridge and valley to max to better see edges. also enable backface culling
+
+f3 -> flip (or alt - n): Flip normals of selected faces 
