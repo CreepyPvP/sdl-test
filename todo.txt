@@ -1,0 +1,14 @@
+todo:
+
+
+depth testing       (done)
+plane mesh gen
+textures
+noise texture
+vertex displacement / basic shading
+
+window resize
+backface culling
+msaa
+
+fix startup. (were probably waiting 2 frames due to vsync)

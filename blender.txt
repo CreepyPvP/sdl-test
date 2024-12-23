@@ -1,0 +1,8 @@
+tab: toggle edit mode
+shift a: Add object
+1/2/3: Switch mode
+f: (fill) create connecting between vertices
+g shift z: Move on all but z axis
+m: merge (by distance to combine meshes?)
+cntrl b: bevel
+
