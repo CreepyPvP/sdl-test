@@ -12,6 +12,8 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 typedef float f32;
 
+#define STB_PERLIN_IMPLEMENTATION
+#include "stb_perlin.h"
 #include "game_math.cpp"
 
 i32 WindowWidth = 1280;
@@ -21,22 +23,25 @@ struct vertex
 {
     v3 Position;
     v3 Normal;
+    v2 UV;
 };
 
 struct state
 {
     SDL_GPUDevice *Device;
+    f32 Time;
 };
 
 struct global_uniforms
 {
     mat4 Projection;
     mat4 View;
+    f32 Time;
 };
 
 state State = {};
 
-SDL_GPUShader *LoadShader(const char *Path, u32 UniformBufferCount, bool Fragment)
+SDL_GPUShader *LoadShader(const char *Path, u32 SamplerCount, u32 UniformBufferCount, bool Fragment)
 {
     SDL_GPUShaderStage Stage = SDL_GPU_SHADERSTAGE_VERTEX;
     if (Fragment)
@@ -55,6 +60,7 @@ SDL_GPUShader *LoadShader(const char *Path, u32 UniformBufferCount, bool Fragmen
     ShaderInfo.format = SDL_GPU_SHADERFORMAT_SPIRV;
     ShaderInfo.stage = Stage;
     ShaderInfo.num_uniform_buffers = UniformBufferCount;
+    ShaderInfo.num_samplers = SamplerCount;
 
     SDL_GPUShader *Shader = SDL_CreateGPUShader(State.Device, &ShaderInfo);
     assert(Shader);
@@ -71,7 +77,7 @@ void CopyToBuffer(SDL_GPUBuffer *Buffer, void *Data, u32 Bytes)
     TransferBufferInfo.size = Bytes;
     SDL_GPUTransferBuffer *TransferBuffer = SDL_CreateGPUTransferBuffer(State.Device, &TransferBufferInfo);
 
-    vertex *TransferData = (vertex *) SDL_MapGPUTransferBuffer(State.Device, TransferBuffer, false);
+    void *TransferData = SDL_MapGPUTransferBuffer(State.Device, TransferBuffer, false);
     SDL_memcpy(TransferData, Data, Bytes);
     SDL_UnmapGPUTransferBuffer(State.Device, TransferBuffer);
 
@@ -86,6 +92,38 @@ void CopyToBuffer(SDL_GPUBuffer *Buffer, void *Data, u32 Bytes)
     Dest.size = Bytes;
 
 	SDL_UploadToGPUBuffer(CopyPass, &Source, &Dest, false);
+
+	SDL_EndGPUCopyPass(CopyPass);
+	SDL_SubmitGPUCommandBuffer(UploadCommandBuffer);
+	SDL_ReleaseGPUTransferBuffer(State.Device, TransferBuffer);
+}
+
+void CopyToTexture(SDL_GPUTexture *Texture, void *Data, u32 Width, u32 Height, u32 BytesPerPixel)
+{
+    u32 Bytes = Width * Height * BytesPerPixel;
+
+    SDL_GPUTransferBufferCreateInfo TransferBufferInfo = {};
+    TransferBufferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    TransferBufferInfo.size = Bytes;
+    SDL_GPUTransferBuffer *TransferBuffer = SDL_CreateGPUTransferBuffer(State.Device, &TransferBufferInfo);
+
+    void *TransferData = SDL_MapGPUTransferBuffer(State.Device, TransferBuffer, false);
+    SDL_memcpy(TransferData, Data, Bytes);
+    SDL_UnmapGPUTransferBuffer(State.Device, TransferBuffer);
+
+    SDL_GPUCommandBuffer *UploadCommandBuffer = SDL_AcquireGPUCommandBuffer(State.Device);
+    SDL_GPUCopyPass *CopyPass = SDL_BeginGPUCopyPass(UploadCommandBuffer);
+
+    SDL_GPUTextureTransferInfo Source = {};
+    Source.transfer_buffer = TransferBuffer;
+
+    SDL_GPUTextureRegion Dest = {};
+    Dest.texture = Texture;
+    Dest.w = Width;
+    Dest.h = Height;
+    Dest.d = 1;
+
+    SDL_UploadToGPUTexture(CopyPass, &Source, &Dest, false);
 
 	SDL_EndGPUCopyPass(CopyPass);
 	SDL_SubmitGPUCommandBuffer(UploadCommandBuffer);
@@ -112,8 +150,8 @@ i32 main()
         return 1;
     }
 
-    SDL_GPUShader *FragmentShader = LoadShader("assets/default.frag.spv", 1, true);
-    SDL_GPUShader *VertexShader = LoadShader("assets/default.vert.spv", 1, false);
+    SDL_GPUShader *FragmentShader = LoadShader("assets/default.frag.spv", 1, 1, true);
+    SDL_GPUShader *VertexShader = LoadShader("assets/default.vert.spv", 1, 1, false);
 
     // TODO: Make sure this format is actually available. Use fallback then!
     SDL_GPUTextureFormat DepthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
@@ -137,7 +175,13 @@ i32 main()
     AttributeNormal.location = 1;
     AttributeNormal.offset = offsetof(vertex, Normal);
 
-    SDL_GPUVertexAttribute VertexAttributes[2] = { AttributePosition, AttributeNormal };
+    SDL_GPUVertexAttribute AttributeUV = {};
+    AttributeUV.buffer_slot = 0;
+    AttributeUV.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+    AttributeUV.location = 2;
+    AttributeUV.offset = offsetof(vertex, UV);
+
+    SDL_GPUVertexAttribute VertexAttributes[3] = { AttributePosition, AttributeNormal, AttributeUV };
 
     SDL_GPUColorTargetDescription SwapchainTargetDescription = {};
     SwapchainTargetDescription.format = SDL_GetGPUSwapchainTextureFormat(State.Device, Window);
@@ -148,7 +192,7 @@ i32 main()
     PipelineInfo.vertex_input_state.vertex_buffer_descriptions = &BufferDescription;
     PipelineInfo.vertex_input_state.num_vertex_buffers = 1;
     PipelineInfo.vertex_input_state.vertex_attributes = VertexAttributes;
-    PipelineInfo.vertex_input_state.num_vertex_attributes = 2;
+    PipelineInfo.vertex_input_state.num_vertex_attributes = 3;
 
     PipelineInfo.depth_stencil_state.enable_depth_test = true;
     PipelineInfo.depth_stencil_state.enable_depth_write = true;
@@ -159,7 +203,7 @@ i32 main()
     PipelineInfo.target_info.has_depth_stencil_target = true;
     PipelineInfo.target_info.depth_stencil_format = DepthFormat;
 
-    PipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+    // PipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
 
     SDL_GPUGraphicsPipeline *Pipeline =  SDL_CreateGPUGraphicsPipeline(State.Device, &PipelineInfo);
     assert(Pipeline);
@@ -185,38 +229,6 @@ i32 main()
     u32 IndexCount = 0;
     u32 Indices[1024] = {};
 
-    // Vertices[0].Position = V3(-0.3, -0.3, 0.0);
-    // Vertices[0].Normal = V3(0, 0, 1);
-    // Vertices[1].Position = V3(0.3, -0.3, 0.0);
-    // Vertices[1].Normal = V3(0, 0, 1);
-    // Vertices[2].Position = V3(0.0, 0.3, 0.0);
-    // Vertices[2].Normal = V3(0, 0, 1);
-    //
-    // Vertices[3].Position = V3(-1.0, 0, -1.0);
-    // Vertices[3].Normal = V3(0, 1, 0);
-    // Vertices[4].Position = V3(1.0, 0, -1.0);
-    // Vertices[4].Normal = V3(0, 1, 0);
-    // Vertices[5].Position = V3(-1.0, 0, 1.0);
-    // Vertices[5].Normal = V3(0, 1, 0);
-    // Vertices[6].Position = V3(1.0, 0, 1.0);
-    // Vertices[6].Normal = V3(0, 1, 0);
-    //
-    // VertexCount = 7;
-    //
-    // Indices[0] = 0;
-    // Indices[1] = 1;
-    // Indices[2] = 2;
-    //
-    // Indices[3] = 3;
-    // Indices[4] = 4;
-    // Indices[5] = 5;
-    //
-    // Indices[6] = 4;
-    // Indices[7] = 5;
-    // Indices[8] = 6;
-    //
-    // IndexCount = 9;
-
     i32 Segments = 5;
 
     for (i32 I = -Segments; I <= Segments; ++I)
@@ -229,6 +241,7 @@ i32 main()
             vertex *Vertex = Vertices + VertexCount++;
             Vertex->Position = V3(X, 0, Z);
             Vertex->Normal = V3(0, 1, 0);
+            Vertex->UV = V2((f32) I / (2 * Segments) + 0.5, (f32) J / (2 * Segments) + 0.5);
         }
     }
 
@@ -265,6 +278,42 @@ i32 main()
     SDL_GPUBuffer *IndexBuffer = SDL_CreateGPUBuffer(State.Device, &IndexBufferInfo);
 
     CopyToBuffer(IndexBuffer, Indices, sizeof(u32) * IndexCount);
+    
+    // Noise Texture
+    //
+    u8 NoiseData[256 * 256];
+    for (u32 X = 0; X < 256; ++X)
+    {
+        for (u32 Y = 0; Y < 256; ++Y)
+        {
+            f32 NoiseX = (f32) X / 256.0f * 16.0f;
+            f32 NoiseY = (f32) Y / 256.0f * 16.0f;
+            // NoiseData[X + 256 * Y] = stb_perlin_noise3(NoiseX, NoiseY, 0, 0, 0, 0);
+            f32 NoiseSample = (stb_perlin_noise3(NoiseX, NoiseY, 0, 256.0f / 16.0f, 256.0f / 16.0f, 0) + 1) / 2;
+            NoiseData[X + 256 * Y] = NoiseSample * 255;
+        }
+    }
+
+    SDL_GPUTextureCreateInfo NoiseInfo = {};
+    NoiseInfo.type = SDL_GPU_TEXTURETYPE_2D;
+    NoiseInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
+    NoiseInfo.width = 256;
+    NoiseInfo.height = 256;
+    NoiseInfo.layer_count_or_depth = 1;
+    NoiseInfo.num_levels = 1;
+    NoiseInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	SDL_GPUTexture *Texture = SDL_CreateGPUTexture(State.Device, &NoiseInfo);
+
+    CopyToTexture(Texture, NoiseData, 256, 256, sizeof(u8));
+
+    SDL_GPUSamplerCreateInfo PointWrapSamplerInfo = {};
+    PointWrapSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    PointWrapSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    PointWrapSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    PointWrapSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    PointWrapSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    PointWrapSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    SDL_GPUSampler *PointWrapSampler = SDL_CreateGPUSampler(State.Device, &PointWrapSamplerInfo);
 
     // Main loop...
     //
@@ -291,6 +340,9 @@ i32 main()
             }
         }
 
+        f32 Delta = 1.0 / 60.0;
+        State.Time += Delta;
+
         SDL_GPUCommandBuffer *CommandBuffer = SDL_AcquireGPUCommandBuffer(State.Device);
 
         SDL_GPUTexture *SwapchainTexture;
@@ -299,13 +351,14 @@ i32 main()
         global_uniforms GlobalUniforms = {};
         GlobalUniforms.Projection = Perspective(Radians(50), (f32) WindowWidth / (f32) WindowHeight, 0.01, 1000);
         GlobalUniforms.View = LookAt(V3(0, 1, 1), V3(0), V3(0, 1, 0));
+        GlobalUniforms.Time = State.Time;
 
         // NOTE: When window is minimized there is no swapchain image, so SwapchainTexture will be NULL
         if (SwapchainTexture)
         {
             SDL_GPUColorTargetInfo ColorTargetInfo = {};
             ColorTargetInfo.texture = SwapchainTexture;
-            ColorTargetInfo.clear_color = { 0.1f, 0.1f, 0.2f, 1.0f };
+            ColorTargetInfo.clear_color = { 1, 1, 1, 1 };
             ColorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
             ColorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
 
@@ -326,8 +379,13 @@ i32 main()
             IndexBufferBinding.buffer = IndexBuffer;
             SDL_BindGPUIndexBuffer(RenderPass, &IndexBufferBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
-            SDL_PushGPUVertexUniformData(CommandBuffer, 0, &GlobalUniforms, sizeof(GlobalUniforms));
+            SDL_GPUTextureSamplerBinding TextureSamplerBinding = {};
+            TextureSamplerBinding.texture = Texture;
+            TextureSamplerBinding.sampler = PointWrapSampler;
+            SDL_BindGPUVertexSamplers(RenderPass, 0, &TextureSamplerBinding, 1);
+            SDL_BindGPUFragmentSamplers(RenderPass, 0, &TextureSamplerBinding, 1);
 
+            SDL_PushGPUVertexUniformData(CommandBuffer, 0, &GlobalUniforms, sizeof(GlobalUniforms));
             SDL_DrawGPUIndexedPrimitives(RenderPass, IndexCount, 1, 0, 0, 0);
 
             SDL_EndGPURenderPass(RenderPass);

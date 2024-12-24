@@ -30,6 +30,22 @@ f32 Length(v3 A)
     return sqrt(Squared);
 }
 
+struct v2
+{
+    f32 X;
+    f32 Y;
+};
+
+inline v2 V2(f32 X)
+{
+    return {X, X};
+}
+
+inline v2 V2(f32 X, f32 Y)
+{
+    return {X, Y};
+}
+
 v3 Norm(v3 A)
 {
     f32 Len = Length(A);
